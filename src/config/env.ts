@@ -23,7 +23,32 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
 });
 
-const parsed = envSchema.safeParse(process.env);
+/** Secrets that ship with the repo - refused in production. */
+const DEV_SECRETS = ['dev-access-secret-change-me', 'dev-refresh-secret-change-me'];
+
+const parsed = envSchema.superRefine((value, ctx) => {
+  // Distinct secrets keep access and refresh tokens cryptographically separate.
+  if (value.JWT_ACCESS_SECRET === value.JWT_REFRESH_SECRET) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['JWT_REFRESH_SECRET'],
+      message: 'JWT_REFRESH_SECRET must differ from JWT_ACCESS_SECRET',
+    });
+  }
+
+  if (value.NODE_ENV === 'production') {
+    const weak = [value.JWT_ACCESS_SECRET, value.JWT_REFRESH_SECRET].filter(
+      (secret) => secret.length < 32 || DEV_SECRETS.includes(secret),
+    );
+    if (weak.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['JWT_ACCESS_SECRET'],
+        message: 'Production requires unique JWT secrets of at least 32 characters',
+      });
+    }
+  }
+}).safeParse(process.env);
 
 if (!parsed.success) {
   const details = parsed.error.issues

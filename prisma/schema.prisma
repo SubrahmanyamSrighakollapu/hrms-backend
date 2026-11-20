@@ -10,16 +10,101 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  ADMIN
-  HR
-  EMPLOYEE
-}
-
 enum UserStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
+}
+
+/// Permission a role holds on a single module.
+/// NONE  -> module hidden
+/// VIEW  -> read-only
+/// MANAGE-> full access
+enum PermissionLevel {
+  NONE
+  VIEW
+  MANAGE
+}
+
+/// Employee type. Drives probation length and future leave/payroll policies.
+enum EmployeeCategory {
+  INTERN
+  FRESHER
+  EXPERIENCED
+  CONTRACT
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+/// A role bundles module permissions and is assigned to employees.
+/// `key` is set only for the built-in roles (ADMIN | HR | EMPLOYEE).
+model Role {
+  id          String  @id @default(uuid())
+  key         String? @unique
+  name        String  @unique
+  description String?
+  isSystem    Boolean @default(false)
+
+  permissions RolePermission[]
+  users       User[]
+  approvalFlows ApprovalFlow[]
+  timeOffRequests TimeOffRequest[] @relation("RequestApproverRole")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+/// One row per (role, module) grant. Only non-NONE levels are stored.
+model RolePermission {
+  id     String          @id @default(uuid())
+  roleId String          @map("role_id")
+  module String
+  level  PermissionLevel @default(NONE)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([roleId, module])
+  @@index([roleId])
+  @@map("role_permissions")
+}
+
+/// Department master. Owned by the Organization module; employees link to it.
+model Department {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  code        String? @unique
+  description String?
+
+  users User[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("departments")
+}
+
+/// Atomic sequence source for human-readable codes (EMP-0001, EMP-0002, ...).
+model Counter {
+  key   String @id
+  value Int    @default(0)
+
+  @@map("counters")
 }
 
 model User {
@@ -28,15 +113,35 @@ model User {
   passwordHash String     @map("password_hash")
   firstName    String     @map("first_name")
   lastName     String     @map("last_name")
-  role         Role       @default(EMPLOYEE)
   status       UserStatus @default(ACTIVE)
 
-  phone       String?
-  avatarUrl   String?  @map("avatar_url")
-  employeeCode String? @unique @map("employee_code")
-  department  String?
-  designation String?
-  joinedAt    DateTime? @map("joined_at")
+  // Access is derived from the assigned role.
+  roleId String? @map("role_id")
+  role   Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  phone        String?
+  avatarUrl    String?  @map("avatar_url")
+  employeeCode String?  @unique @map("employee_code")
+  designation  String?
+  joinedAt     DateTime? @map("joined_at")
+
+  // Employment classification - drives probation and (later) policy defaults.
+  category              EmployeeCategory @default(FRESHER)
+  employmentType        EmploymentType   @default(FULL_TIME)
+  priorExperienceMonths Int              @default(0) @map("prior_experience_months")
+  probationEndDate      DateTime?        @map("probation_end_date")
+  confirmationDate      DateTime?        @map("confirmation_date")
+  contractEndDate       DateTime?        @map("contract_end_date")
+
+  // Personal details
+  dateOfBirth           DateTime? @map("date_of_birth")
+  gender                Gender?
+  address               String?
+  emergencyContactName  String?   @map("emergency_contact_name")
+  emergencyContactPhone String?   @map("emergency_contact_phone")
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
   // Self relation: reporting manager (used by team / manager views and chat)
   managerId String? @map("manager_id")
@@ -46,10 +151,127 @@ model User {
   refreshTokenHash String?   @map("refresh_token_hash")
   lastLoginAt      DateTime? @map("last_login_at")
 
+  timeOffRequests    TimeOffRequest[]    @relation("RequestEmployee")
+  approvedRequests   TimeOffRequest[]    @relation("RequestApprover")
+  leaveBalances      LeaveBalance[]
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([role])
+  @@index([roleId])
   @@index([managerId])
+  @@index([departmentId])
+  @@index([employeeCode])
   @@map("users")
+}
+
+/* =========================================================
+   Time Off module
+   ---------------------------------------------------------
+   A single TimeOffRequest row covers all four request types
+   (LEAVE, PERMISSION, REGULARIZATION, EXTRA_HOURS). The
+   type-specific fields are nullable; only those relevant to
+   the request type are populated.
+   ========================================================= */
+
+enum TimeOffRequestType {
+  LEAVE
+  PERMISSION
+  REGULARIZATION
+  EXTRA_HOURS
+}
+
+enum TimeOffRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  EARNED
+  COMP_OFF
+  PERSONAL
+  UNPAID
+}
+
+model TimeOffRequest {
+  id     String @id @default(uuid())
+  type   TimeOffRequestType
+  status TimeOffRequestStatus @default(PENDING)
+
+  employeeId String @map("employee_id")
+  employee   User   @relation("RequestEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  // ---- LEAVE fields ----
+  leaveType LeaveType? @map("leave_type")
+  fromDate  DateTime?  @map("from_date")
+  toDate    DateTime?  @map("to_date")
+  days      Decimal?   @db.Decimal(5, 2)
+
+  // ---- PERMISSION fields (short duration, same day) ----
+  permissionDate DateTime? @map("permission_date")
+  fromTime       String?   @map("from_time") // HH:mm
+  toTime         String?   @map("to_time")
+
+  // ---- REGULARIZATION fields (fix missing punches) ----
+  regularizationDate DateTime? @map("regularization_date")
+  actualInTime       String?   @map("actual_in_time")
+  actualOutTime      String?   @map("actual_out_time")
+
+  // ---- EXTRA_HOURS fields (overtime) ----
+  extraHoursDate DateTime? @map("extra_hours_date")
+  extraHoursFrom String?   @map("extra_hours_from")
+  extraHoursTo   String?   @map("extra_hours_to")
+  extraHours     Decimal?  @map("extra_hours") @db.Decimal(5, 2)
+
+  reason   String
+  // Approval audit trail
+  approverId      String?   @map("approver_id")
+  approver        User?     @relation("RequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  approverRoleId  String?   @map("approver_role_id")
+  approverRole    Role?     @relation("RequestApproverRole", fields: [approverRoleId], references: [id], onDelete: SetNull)
+  approvedAt      DateTime? @map("approved_at")
+  approvalComment String?   @map("approval_comment")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([type])
+  @@map("time_off_requests")
+}
+
+/** Per-employee leave allowance for a given leave type and year. */
+model LeaveBalance {
+  id         String    @id @default(uuid())
+  employeeId String    @map("employee_id")
+  employee   User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType  LeaveType @map("leave_type")
+  year       Int
+  total      Decimal   @db.Decimal(6, 2)
+  used       Decimal   @default(0) @db.Decimal(6, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([employeeId, leaveType, year])
+  @@index([employeeId])
+  @@map("leave_balances")
+}
+
+/** Which role approves each time-off request type. Default: HR. */
+model ApprovalFlow {
+  id             String              @id @default(uuid())
+  requestType    TimeOffRequestType  @unique @map("request_type")
+  approverRoleId String              @map("approver_role_id")
+  approverRole   Role                @relation(fields: [approverRoleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([approverRoleId])
+  @@map("approval_flows")
 }

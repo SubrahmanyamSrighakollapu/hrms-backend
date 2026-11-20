@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
-import type { LoginInput, RefreshInput, RegisterInput } from './auth.validation';
+import type { LoginInput, LogoutInput, RefreshInput, RegisterInput } from './auth.validation';
 import * as authService from './auth.service';
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
@@ -21,8 +21,9 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {
-  if (!req.user) throw ApiError.unauthorized();
-  await authService.logout(req.user.id);
+  const { refreshToken } = (req.body ?? {}) as LogoutInput;
+  // Authenticated request revokes by user; otherwise the refresh token identifies the session.
+  await authService.logout(req.user?.id ?? null, refreshToken);
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
 

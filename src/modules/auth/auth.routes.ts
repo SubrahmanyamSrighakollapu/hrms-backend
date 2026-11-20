@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { env } from '../../config/env';
-import { authenticate } from '../../middleware/auth';
+import { authenticate, optionalAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import * as authController from './auth.controller';
-import { loginSchema, refreshSchema, registerSchema } from './auth.validation';
+import { loginSchema, logoutSchema, refreshSchema, registerSchema } from './auth.validation';
 
 const router = Router();
 
@@ -19,8 +19,9 @@ const authLimiter = rateLimit({
 
 router.post('/register', authLimiter, validate(registerSchema), authController.register);
 router.post('/login', authLimiter, validate(loginSchema), authController.login);
-router.post('/refresh', validate(refreshSchema), authController.refresh);
-router.post('/logout', authenticate, authController.logout);
+router.post('/refresh', authLimiter, validate(refreshSchema), authController.refresh);
+// Logout tolerates an expired access token: the refresh token can revoke too.
+router.post('/logout', optionalAuth, validate(logoutSchema), authController.logout);
 router.get('/me', authenticate, authController.me);
 
 export default router;
