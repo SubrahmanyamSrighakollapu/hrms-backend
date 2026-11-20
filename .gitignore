@@ -6,3 +6,6 @@ dist/
 npm-debug.log*
 coverage/
 .DS_Store
+
+# Chat attachment storage (local dev) - never commit uploaded files
+storage/

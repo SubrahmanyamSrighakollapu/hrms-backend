@@ -1,5 +1,44 @@
 import { z } from 'zod';
 
+/** Reads a boolean from env text ("true"/"1"/"yes"/"on" ⇒ true). */
+const booleanFromEnv = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.string()])
+    .default(defaultValue)
+    .transform((value) =>
+      typeof value === 'boolean' ? value : ['true', '1', 'yes', 'on'].includes(value.toLowerCase()),
+    );
+
+/** Default attachment allow-list (kept intentionally conservative). */
+const DEFAULT_CHAT_MIME_TYPES = [
+  // images
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/svg+xml',
+  // documents
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip',
+  'application/x-zip-compressed',
+  // media
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+].join(',');
+
 /**
  * Central env loader. Validates process.env once at boot so the app fails
  * fast with a readable message instead of crashing deep inside a request.
@@ -21,7 +60,25 @@ const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+
+  // ---- Chat module ----
+  /** Root for chat attachment storage. Production: /var/www/hrms-chat-storage */
+  CHAT_STORAGE_ROOT: z.string().min(1).default('storage/chat'),
+  CHAT_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(25),
+  CHAT_ALLOWED_MIME_TYPES: z.string().min(1).default(DEFAULT_CHAT_MIME_TYPES),
+  CHAT_ENABLE_THUMBNAILS: booleanFromEnv(true),
+  /** Page size ceiling for message history / search. */
+  CHAT_MESSAGE_PAGE_SIZE: z.coerce.number().int().positive().max(200).default(30),
+  /** Uploads allowed per employee per minute. */
+  CHAT_UPLOAD_RATE_LIMIT: z.coerce.number().int().positive().default(30),
+
+  // ---- Payroll module ----
+  /** Root for private payslip PDFs. Production should use persistent storage. */
+  PAYROLL_STORAGE_ROOT: z.string().min(1).default('storage/payroll'),
+  PAYROLL_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().max(50).default(10),
+  PAYROLL_MAX_FILES_PER_BATCH: z.coerce.number().int().positive().max(500).default(100),
 });
+
 
 /** Secrets that ship with the repo - refused in production. */
 const DEV_SECRETS = ['dev-access-secret-change-me', 'dev-refresh-secret-change-me'];
@@ -66,6 +123,12 @@ export const env = {
   corsOrigins: raw.CORS_ORIGINS.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
+  /** Chat attachment allow-list, normalised to an array of MIME types. */
+  chatAllowedMimeTypes: raw.CHAT_ALLOWED_MIME_TYPES.split(',')
+    .map((type) => type.trim().toLowerCase())
+    .filter(Boolean),
+  chatMaxFileSizeBytes: raw.CHAT_MAX_FILE_SIZE_MB * 1024 * 1024,
+  payrollMaxFileSizeBytes: raw.PAYROLL_MAX_FILE_SIZE_MB * 1024 * 1024,
 };
 
 export type Env = typeof env;

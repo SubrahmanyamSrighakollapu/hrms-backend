@@ -227,6 +227,21 @@ async function resolveReferences(input: {
   if (input.managerId && input.selfId && input.managerId === input.selfId) {
     throw ApiError.badRequest('An employee cannot report to themselves');
   }
+  if (input.managerId && input.selfId) {
+    const visited = new Set<string>([input.selfId]);
+    let cursor: string | null = input.managerId;
+    while (cursor) {
+      if (visited.has(cursor)) {
+        throw ApiError.badRequest('This reporting change would create a manager cycle');
+      }
+      visited.add(cursor);
+      const ancestor: { managerId: string | null } | null = await prisma.user.findUnique({
+        where: { id: cursor },
+        select: { managerId: true },
+      });
+      cursor = ancestor?.managerId ?? null;
+    }
+  }
 
   return {
     roleId: input.roleId ?? null,

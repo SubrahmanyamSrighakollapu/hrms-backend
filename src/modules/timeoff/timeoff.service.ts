@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { ApiError } from '../../utils/ApiError';
+import * as notificationsService from '../notifications/notifications.service';
 import type {
   ApproveRejectInput,
   CreateTimeOffInput,
@@ -250,17 +251,18 @@ export async function createRequest(
 
     // Leave balance guard for paid leaves (skip UNPAID).
     if (input.leaveType !== 'UNPAID') {
-      const year = input.fromDate.getFullYear();
+      const year = input.fromDate.getUTCFullYear();
       const balance = await prisma.leaveBalance.findUnique({
         where: { employeeId_leaveType_year: { employeeId, leaveType: input.leaveType, year } },
       });
-      if (balance) {
-        const remaining = Number(balance.total) - Number(balance.used);
-        if (input.days > remaining) {
-          throw ApiError.badRequest(
-            `Insufficient ${input.leaveType} balance (${remaining.toFixed(2)} of ${Number(balance.total)} remaining)`,
-          );
-        }
+      if (!balance) {
+        throw ApiError.badRequest(`No ${input.leaveType} balance is configured for ${year}`);
+      }
+      const remaining = Number(balance.total) - Number(balance.used);
+      if (input.days > remaining) {
+        throw ApiError.badRequest(
+          `Insufficient ${input.leaveType} balance (${remaining.toFixed(2)} of ${Number(balance.total)} remaining)`,
+        );
       }
     }
   } else if (input.type === 'PERMISSION') {
@@ -279,6 +281,16 @@ export async function createRequest(
   }
 
   const row = await prisma.timeOffRequest.create({ data, select: requestSelect });
+  void notificationsService
+    .notifyRole({
+      roleId: approverRole.id,
+      exceptUserId: employeeId,
+      kind: 'TIME_OFF_REQUEST',
+      title: 'Time-off request needs review',
+      body: `${row.employee.firstName} ${row.employee.lastName} submitted a ${row.type.toLowerCase().replace('_', ' ')} request.`,
+      href: '/time-off/approvals',
+    })
+    .catch((error) => console.error('Could not create time-off notification:', error));
   return toDto(row);
 }
 
@@ -305,31 +317,45 @@ export async function decideRequest(
 
   const updated = await prisma.$transaction(async (tx) => {
     if (decision === 'APPROVED' && row.type === 'LEAVE' && row.leaveType && row.leaveType !== 'UNPAID') {
-      const year = row.fromDate!.getFullYear();
-      const balance = await tx.leaveBalance.findUnique({
-        where: {
-          employeeId_leaveType_year: { employeeId: row.employeeId, leaveType: row.leaveType, year },
-        },
-      });
-      if (balance) {
-        await tx.leaveBalance.update({
-          where: { id: balance.id },
-          data: { used: { increment: row.days ?? 0 } },
-        });
+      const year = row.fromDate!.getUTCFullYear();
+      const days = row.days ?? new Prisma.Decimal(0);
+      const balances = await tx.$queryRaw<{ id: string }[]>`
+        UPDATE "leave_balances"
+        SET "used" = "used" + ${days}
+        WHERE "employee_id" = ${row.employeeId}
+          AND "leave_type" = ${row.leaveType}::"LeaveType"
+          AND "year" = ${year}
+          AND "total" - "used" >= ${days}
+        RETURNING "id"
+      `;
+      if (!balances[0]) {
+        throw ApiError.badRequest('Leave balance is missing or no longer sufficient for this request');
       }
     }
 
-    return tx.timeOffRequest.update({
-      where: { id: requestId },
+    const changed = await tx.timeOffRequest.updateMany({
+      where: { id: requestId, status: 'PENDING', approverRoleId: actorRoleId },
       data: {
         status: decision,
         approverId: actorId,
         approvedAt: new Date(),
         approvalComment: input.comment?.trim() || null,
       },
-      select: requestSelect,
     });
+    if (changed.count !== 1) throw ApiError.conflict('This request has already been decided');
+
+    return tx.timeOffRequest.findUniqueOrThrow({ where: { id: requestId }, select: requestSelect });
   });
+
+  void notificationsService
+    .createNotification({
+      userId: row.employeeId,
+      kind: 'TIME_OFF_DECISION',
+      title: `Time-off request ${decision.toLowerCase()}`,
+      body: `Your ${row.type.toLowerCase().replace('_', ' ')} request was ${decision.toLowerCase()}.`,
+      href: '/time-off',
+    })
+    .catch((error) => console.error('Could not create time-off notification:', error));
 
   return toDto(updated);
 }

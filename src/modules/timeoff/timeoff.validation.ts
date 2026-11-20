@@ -57,6 +57,13 @@ export const createTimeOffSchema = z
       if (val.fromDate > val.toDate) {
         ctx.addIssue({ code: 'custom', message: '"From" date cannot be after "To" date', path: ['fromDate'] });
       }
+      if (val.fromDate.getUTCFullYear() !== val.toDate.getUTCFullYear()) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'A leave request must stay within one calendar year',
+          path: ['toDate'],
+        });
+      }
     }
     if (val.type === 'PERMISSION' || val.type === 'EXTRA_HOURS') {
       const from = val.type === 'PERMISSION' ? val.fromTime : val.extraHoursFrom;

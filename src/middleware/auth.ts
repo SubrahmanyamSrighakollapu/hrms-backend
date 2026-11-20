@@ -10,8 +10,11 @@ import { verifyAccessToken } from '../utils/jwt';
  *
  * This runs on every request so deactivating an account or changing a role's
  * permissions takes effect immediately - a token never carries stale rights.
+ *
+ * Exported so the Socket.IO gateway can authenticate a handshake with the
+ * exact same rules as HTTP requests.
  */
-async function resolveUser(userId: string) {
+export async function resolveUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {

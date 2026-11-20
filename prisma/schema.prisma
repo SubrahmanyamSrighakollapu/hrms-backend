@@ -56,9 +56,9 @@ model Role {
   description String?
   isSystem    Boolean @default(false)
 
-  permissions RolePermission[]
-  users       User[]
-  approvalFlows ApprovalFlow[]
+  permissions     RolePermission[]
+  users           User[]
+  approvalFlows   ApprovalFlow[]
   timeOffRequests TimeOffRequest[] @relation("RequestApproverRole")
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -120,8 +120,8 @@ model User {
   role   Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull)
 
   phone        String?
-  avatarUrl    String?  @map("avatar_url")
-  employeeCode String?  @unique @map("employee_code")
+  avatarUrl    String?   @map("avatar_url")
+  employeeCode String?   @unique @map("employee_code")
   designation  String?
   joinedAt     DateTime? @map("joined_at")
 
@@ -151,9 +151,22 @@ model User {
   refreshTokenHash String?   @map("refresh_token_hash")
   lastLoginAt      DateTime? @map("last_login_at")
 
-  timeOffRequests    TimeOffRequest[]    @relation("RequestEmployee")
-  approvedRequests   TimeOffRequest[]    @relation("RequestApprover")
-  leaveBalances      LeaveBalance[]
+  timeOffRequests  TimeOffRequest[] @relation("RequestEmployee")
+  approvedRequests TimeOffRequest[] @relation("RequestApprover")
+  leaveBalances    LeaveBalance[]
+  payslips         Payslip[]        @relation("PayslipEmployee")
+  uploadedPayslips Payslip[]        @relation("PayslipUploader")
+  notifications    Notification[]
+
+  // Chat module - an employee's messaging footprint (see chat models below).
+  chatMemberships ConversationMember[]
+  chatMessages    Message[]
+  chatAttachments MessageAttachment[]
+  chatReceipts    MessageReceipt[]
+  chatReactions   MessageReaction[]
+  chatPins        PinnedMessage[]
+  chatPresence    UserPresence?
+  chatSettings    UserSettings?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -165,14 +178,16 @@ model User {
   @@map("users")
 }
 
-/* =========================================================
-   Time Off module
-   ---------------------------------------------------------
-   A single TimeOffRequest row covers all four request types
-   (LEAVE, PERMISSION, REGULARIZATION, EXTRA_HOURS). The
-   type-specific fields are nullable; only those relevant to
-   the request type are populated.
-   ========================================================= */
+/**
+ * =========================================================
+ * Time Off module
+ * ---------------------------------------------------------
+ * A single TimeOffRequest row covers all four request types
+ * (LEAVE, PERMISSION, REGULARIZATION, EXTRA_HOURS). The
+ * type-specific fields are nullable; only those relevant to
+ * the request type are populated.
+ * =========================================================
+ */
 
 enum TimeOffRequestType {
   LEAVE
@@ -197,7 +212,7 @@ enum LeaveType {
 }
 
 model TimeOffRequest {
-  id     String @id @default(uuid())
+  id     String               @id @default(uuid())
   type   TimeOffRequestType
   status TimeOffRequestStatus @default(PENDING)
 
@@ -226,7 +241,7 @@ model TimeOffRequest {
   extraHoursTo   String?   @map("extra_hours_to")
   extraHours     Decimal?  @map("extra_hours") @db.Decimal(5, 2)
 
-  reason   String
+  reason          String
   // Approval audit trail
   approverId      String?   @map("approver_id")
   approver        User?     @relation("RequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
@@ -244,7 +259,9 @@ model TimeOffRequest {
   @@map("time_off_requests")
 }
 
-/** Per-employee leave allowance for a given leave type and year. */
+/**
+ * Per-employee leave allowance for a given leave type and year.
+ */
 model LeaveBalance {
   id         String    @id @default(uuid())
   employeeId String    @map("employee_id")
@@ -262,16 +279,298 @@ model LeaveBalance {
   @@map("leave_balances")
 }
 
-/** Which role approves each time-off request type. Default: HR. */
+/**
+ * Which role approves each time-off request type. Default: HR.
+ */
 model ApprovalFlow {
-  id             String              @id @default(uuid())
-  requestType    TimeOffRequestType  @unique @map("request_type")
-  approverRoleId String              @map("approver_role_id")
-  approverRole   Role                @relation(fields: [approverRoleId], references: [id], onDelete: Cascade)
+  id             String             @id @default(uuid())
+  requestType    TimeOffRequestType @unique @map("request_type")
+  approverRoleId String             @map("approver_role_id")
+  approverRole   Role               @relation(fields: [approverRoleId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([approverRoleId])
   @@map("approval_flows")
+}
+
+/**
+ * =========================================================
+ * Chat module
+ * ---------------------------------------------------------
+ * Internal employee messaging. Chat identities are the
+ * existing `users` rows - there is no separate identity table.
+ * Tables use a `chat_` prefix so chat data stays logically
+ * separate from HRMS tables while remaining in the existing
+ * `public` schema (keeps every existing model untouched).
+ * =========================================================
+ */
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum ConversationMemberRole {
+  MEMBER
+  ADMIN
+}
+
+enum ChatMessageType {
+  TEXT
+  IMAGE
+  FILE
+  VIDEO
+  SYSTEM
+}
+
+enum PresenceStatus {
+  ONLINE
+  OFFLINE
+}
+
+/// A 1:1 (DIRECT) or multi-member (GROUP) conversation.
+model Conversation {
+  id            String           @id @default(uuid())
+  type          ConversationType
+  name          String?
+  description   String?
+  avatarPath    String?          @map("avatar_path")
+  createdById   String?          @map("created_by")
+  lastMessageId String?          @map("last_message_id")
+  isActive      Boolean          @default(true) @map("is_active")
+
+  /// DIRECT only: deterministic key for the unordered employee pair
+  /// ("<minId>:<maxId>") so a pair can never end up with two conversations.
+  directKey String? @unique @map("direct_key")
+
+  members  ConversationMember[]
+  messages Message[]
+  pins     PinnedMessage[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([type])
+  @@index([lastMessageId])
+  @@map("chat_conversations")
+}
+
+/// Membership of an employee in a conversation (with per-member state).
+model ConversationMember {
+  id                String                 @id @default(uuid())
+  conversationId    String                 @map("conversation_id")
+  employeeId        String                 @map("employee_id")
+  role              ConversationMemberRole @default(MEMBER)
+  isMuted           Boolean                @default(false) @map("is_muted")
+  isArchived        Boolean                @default(false) @map("is_archived")
+  lastReadMessageId String?                @map("last_read_message_id")
+  lastReadAt        DateTime?              @map("last_read_at")
+  joinedAt          DateTime               @default(now()) @map("joined_at")
+  leftAt            DateTime?              @map("left_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  employee     User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([conversationId, employeeId])
+  @@index([employeeId])
+  @@index([conversationId])
+  @@map("chat_conversation_members")
+}
+
+/// A single chat message. Soft-deleted, never hard-removed by default.
+model Message {
+  id                     String          @id @default(uuid())
+  conversationId         String          @map("conversation_id")
+  senderId               String?         @map("sender_employee_id")
+  messageType            ChatMessageType @default(TEXT) @map("message_type")
+  content                String?
+  replyToMessageId       String?         @map("reply_to_message_id")
+  forwardedFromMessageId String?         @map("forwarded_from_message_id")
+  /// Client-generated idempotency key - makes retries safe.
+  clientMessageId        String?         @map("client_message_id")
+  isDeleted              Boolean         @default(false) @map("is_deleted")
+  editedAt               DateTime?       @map("edited_at")
+  deletedAt              DateTime?       @map("deleted_at")
+
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?               @relation(fields: [senderId], references: [id], onDelete: SetNull)
+  attachments  MessageAttachment[]
+  receipts     MessageReceipt[]
+  reactions    MessageReaction[]
+  pins         PinnedMessage[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([conversationId, clientMessageId])
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([conversationId, isDeleted])
+  @@map("chat_messages")
+}
+
+/// Metadata for a file stored on the Linux filesystem (never in Postgres).
+model MessageAttachment {
+  id               String  @id @default(uuid())
+  messageId        String  @map("message_id")
+  uploadedById     String? @map("uploaded_by_employee_id")
+  originalFilename String  @map("original_filename")
+  storedFilename   String  @map("stored_filename")
+  storagePath      String  @map("storage_path")
+  thumbnailPath    String? @map("thumbnail_path")
+  mimeType         String  @map("mime_type")
+  fileExtension    String? @map("file_extension")
+  fileSize         Int     @map("file_size")
+  category         String?
+  checksum         String?
+  width            Int?
+  height           Int?
+
+  message    Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([messageId])
+  @@map("chat_message_attachments")
+}
+
+/// Per-recipient delivery + read state for a message.
+model MessageReceipt {
+  id          String    @id @default(uuid())
+  messageId   String    @map("message_id")
+  employeeId  String    @map("employee_id")
+  deliveredAt DateTime? @map("delivered_at")
+  readAt      DateTime? @map("read_at")
+
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  employee User    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([messageId, employeeId])
+  @@index([employeeId])
+  @@map("chat_message_receipts")
+}
+
+/// An emoji reaction; one row per (message, employee, emoji).
+model MessageReaction {
+  id         String @id @default(uuid())
+  messageId  String @map("message_id")
+  employeeId String @map("employee_id")
+  reaction   String
+
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  employee User    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([messageId, employeeId, reaction])
+  @@index([messageId])
+  @@map("chat_message_reactions")
+}
+
+/// A message pinned within a conversation.
+model PinnedMessage {
+  id             String  @id @default(uuid())
+  conversationId String  @map("conversation_id")
+  messageId      String  @map("message_id")
+  pinnedById     String? @map("pinned_by_employee_id")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User?        @relation(fields: [pinnedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId])
+  @@map("chat_pinned_messages")
+}
+
+/// Presence is derived from live sockets and mirrored here for last-seen.
+model UserPresence {
+  employeeId String         @id @map("employee_id")
+  status     PresenceStatus @default(OFFLINE)
+  lastSeenAt DateTime?      @map("last_seen_at")
+
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("chat_user_presence")
+}
+
+/// Per-employee chat preferences.
+model UserSettings {
+  employeeId          String  @id @map("employee_id")
+  notificationEnabled Boolean @default(true) @map("notification_enabled")
+  soundEnabled        Boolean @default(true) @map("sound_enabled")
+
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("chat_user_settings")
+}
+
+/// One private PDF payslip per employee and payroll month.
+model Payslip {
+  id               String   @id @default(uuid())
+  employeeId       String   @map("employee_id")
+  uploadedById     String   @map("uploaded_by_id")
+  payrollPeriod    DateTime @db.Date @map("payroll_period")
+  originalFilename String   @map("original_filename")
+  storagePath      String   @map("storage_path")
+  fileSize         Int      @map("file_size")
+  checksum         String
+
+  employee   User @relation("PayslipEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  uploadedBy User @relation("PayslipUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([employeeId, payrollPeriod])
+  @@index([payrollPeriod])
+  @@map("payslips")
+}
+
+/// Organization-wide profile used by the Settings module.
+model OrganizationProfile {
+  id           String   @id @default("primary")
+  name         String   @default("HRMS Workspace")
+  supportEmail String?  @map("support_email")
+  timezone     String   @default("Asia/Kolkata")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("organization_profiles")
+}
+
+/// User-scoped in-app notifications generated by HR workflows.
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  kind      String
+  title     String
+  body      String
+  href      String
+  readAt    DateTime? @map("read_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("notifications")
 }

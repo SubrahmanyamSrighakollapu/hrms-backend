@@ -1,17 +1,28 @@
 import 'dotenv/config';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { createApp } from './app';
 import { env } from './config/env';
 import { connectDatabase, disconnectDatabase } from './config/prisma';
+import { attachChatRealtime } from './modules/chat/chat.socket';
+import { ensureStorageDirs } from './modules/chat/chat.storage';
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
+  // Create the chat attachment tree up front so the first upload never races
+  // directory creation.
+  await ensureStorageDirs();
 
   const app = createApp();
-  const server: Server = app.listen(env.PORT, () => {
+  const server: Server = createServer(app);
+
+  // Socket.IO rides on the same HTTP server/process as the REST API (spec §17).
+  attachChatRealtime(server);
+
+  server.listen(env.PORT, () => {
     console.log(`\n  HRMS API running [${env.NODE_ENV}]`);
     console.log(`  http://localhost:${env.PORT}${env.API_PREFIX}`);
-    console.log(`  Health: http://localhost:${env.PORT}${env.API_PREFIX}/health\n`);
+    console.log(`  Health: http://localhost:${env.PORT}${env.API_PREFIX}/health`);
+    console.log(`  Chat realtime: ws://localhost:${env.PORT}/socket.io\n`);
   });
 
   const shutdown = async (signal: string) => {
