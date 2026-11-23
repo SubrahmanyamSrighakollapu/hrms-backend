@@ -194,9 +194,6 @@ CREATE INDEX "chat_pinned_messages_conversation_id_idx" ON "chat_pinned_messages
 CREATE UNIQUE INDEX "chat_pinned_messages_conversation_id_message_id_key" ON "chat_pinned_messages"("conversation_id", "message_id");
 
 -- AddForeignKey
-ALTER TABLE "time_off_requests" ADD CONSTRAINT "time_off_requests_approver_role_id_fkey" FOREIGN KEY ("approver_role_id") REFERENCES "roles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "chat_conversation_members" ADD CONSTRAINT "chat_conversation_members_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "chat_conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
