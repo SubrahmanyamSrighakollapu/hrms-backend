@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationFields } from '../../utils/pagination';
 
 const payrollPeriod = z
   .string()
@@ -9,8 +10,7 @@ export const uploadPayslipsSchema = z.object({ payrollPeriod });
 export const listPayslipsSchema = z.object({
   payrollPeriod: payrollPeriod.optional(),
   q: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  ...paginationFields(50),
 });
 
 export type UploadPayslipsInput = z.infer<typeof uploadPayslipsSchema>;

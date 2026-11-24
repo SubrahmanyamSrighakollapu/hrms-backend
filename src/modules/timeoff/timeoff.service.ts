@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { ApiError } from '../../utils/ApiError';
+import { pageMeta, skipTake, type PageMeta } from '../../utils/pagination';
 import * as notificationsService from '../notifications/notifications.service';
 import type {
   ApproveRejectInput,
@@ -151,12 +152,8 @@ async function approverRoleFor(type: string): Promise<{ id: string; name: string
 
 /* ---------------- list / get ---------------- */
 
-export interface ListResult {
+export interface ListResult extends PageMeta {
   requests: TimeOffRequestDto[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
 }
 
 export async function listRequests(
@@ -176,17 +173,13 @@ export async function listRequests(
       where,
       select: requestSelect,
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...skipTake(page, pageSize),
     }),
   ]);
 
   return {
     requests: rows.map(toDto),
-    total,
-    page,
-    pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    ...pageMeta(page, pageSize, total),
   };
 }
 
@@ -208,17 +201,13 @@ export async function listPendingForApprover(
       where,
       select: requestSelect,
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...skipTake(page, pageSize),
     }),
   ]);
 
   return {
     requests: rows.map(toDto),
-    total,
-    page,
-    pageSize,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    ...pageMeta(page, pageSize, total),
   };
 }
 

@@ -15,6 +15,18 @@ interface ErrorBody {
   stack?: string;
 }
 
+interface HttpishError extends Error {
+  status: number;
+  type?: string;
+}
+
+/** Errors thrown by body-parser / Express that already carry a 4xx status. */
+function isHttpError(error: unknown): error is HttpishError {
+  if (!(error instanceof Error)) return false;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
 /**
  * Single place that turns any thrown value into a JSON error response.
  */
@@ -27,6 +39,11 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     statusCode = error.statusCode;
     message = error.message;
     details = error.details;
+  } else if (isHttpError(error)) {
+    // Body-parser / Express errors carry their own 4xx status (e.g. malformed
+    // JSON -> 400, payload too large -> 413). Surface them as client errors.
+    statusCode = error.status;
+    message = error.type === 'entity.parse.failed' ? 'Malformed JSON body' : error.message;
   } else if (error instanceof ZodError) {
     statusCode = 400;
     message = 'Validation failed';

@@ -47,6 +47,26 @@ enum Gender {
   OTHER
 }
 
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SubLocationType {
+  BLOCK
+  FLOOR
+  WING
+  ZONE
+  OTHER
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+}
+
 /// A role bundles module permissions and is assigned to employees.
 /// `key` is set only for the built-in roles (ADMIN | HR | EMPLOYEE).
 model Role {
@@ -91,12 +111,131 @@ model Department {
   code        String? @unique
   description String?
 
+  status RecordStatus @default(ACTIVE)
+
+  // Hierarchy: sub-departments are departments with a non-null parentId.
+  parentId String?     @map("parent_id")
+  parent   Department? @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children Department[] @relation("DepartmentParent")
+
+  // Department head (an employee) and the location this department sits in.
+  headId     String?   @map("head_id")
+  head       User?     @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  locationId String?   @map("location_id")
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
   users User[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@index([parentId])
+  @@index([headId])
+  @@index([locationId])
   @@map("departments")
+}
+
+/// Office location / branch. Departments and employees link to it.
+model Location {
+  id            String       @id @default(uuid())
+  name          String       @unique
+  code          String?      @unique
+  addressLine1  String?      @map("address_line_1")
+  addressLine2  String?      @map("address_line_2")
+  city          String?
+  state         String?
+  country       String?
+  postalCode    String?      @map("postal_code")
+  timezone      String       @default("Asia/Kolkata")
+  workStart     String?      @map("work_start") // HH:mm
+  workEnd       String?      @map("work_end")   // HH:mm
+  isDefault     Boolean      @default(false) @map("is_default")
+  status        RecordStatus @default(ACTIVE)
+
+  departments Department[]
+  users       User[]
+  subLocations SubLocation[]
+  holidays    Holiday[]
+  desks       Desk[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("locations")
+}
+
+/// Sub-area within a location (block, floor, wing, zone). Flat list.
+model SubLocation {
+  id         String          @id @default(uuid())
+  locationId String          @map("location_id")
+  location   Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  name       String
+  type       SubLocationType @default(OTHER)
+  code       String?
+  status     RecordStatus    @default(ACTIVE)
+
+  users User[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId])
+  @@map("sub_locations")
+}
+
+/// Previous work experience entry for an employee.
+model WorkExperience {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company         String
+  designation     String?
+  fromDate        DateTime @map("from_date")
+  toDate          DateTime? @map("to_date")
+  currentlyWorking Boolean  @default(false) @map("currently_working")
+  description     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("work_experiences")
+}
+
+/// Family member / dependent of an employee.
+model FamilyMember {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String
+  dateOfBirth  DateTime? @map("date_of_birth")
+  phone        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("family_members")
+}
+
+/// Education record for an employee.
+model Education {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution   String
+  degree        String
+  fieldOfStudy  String?  @map("field_of_study")
+  fromYear      Int      @map("from_year")
+  toYear        Int?     @map("to_year")
+  percentage    Decimal? @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("educations")
 }
 
 /// Atomic sequence source for human-readable codes (EMP-0001, EMP-0002, ...).
@@ -139,14 +278,38 @@ model User {
   address               String?
   emergencyContactName  String?   @map("emergency_contact_name")
   emergencyContactPhone String?   @map("emergency_contact_phone")
+  emergencyContactRelationship String? @map("emergency_contact_relationship")
 
+  // Org structure links
   departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  locationId    String?     @map("location_id")
+  location      Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  subLocationId String?     @map("sub_location_id")
+  subLocation   SubLocation? @relation(fields: [subLocationId], references: [id], onDelete: SetNull)
+
+  // Onboarding gate: employees cannot self-edit until this is true.
+  onboardingCompleted Boolean @default(false) @map("onboarding_completed")
+
+  // Bank / statutory details (plain text for v1)
+  bankName    String? @map("bank_name")
+  bankAccount String? @map("bank_account")
+  ifsc        String?
+  pan         String?
+  aadhaar     String?
+  uan         String?
+
+  bloodGroup    String?        @map("blood_group")
+  maritalStatus MaritalStatus? @map("marital_status")
 
   // Self relation: reporting manager (used by team / manager views and chat)
   managerId String? @map("manager_id")
   manager   User?   @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
   reports   User[]  @relation("UserManager")
+
+  // Back-relation: departments where this user is the head.
+  headOf Department[] @relation("DepartmentHead")
 
   refreshTokenHash String?   @map("refresh_token_hash")
   lastLoginAt      DateTime? @map("last_login_at")
@@ -157,6 +320,34 @@ model User {
   payslips         Payslip[]        @relation("PayslipEmployee")
   uploadedPayslips Payslip[]        @relation("PayslipUploader")
   notifications    Notification[]
+
+  // My Info child collections
+  workExperiences WorkExperience[]
+  familyMembers   FamilyMember[]
+  educations      Education[]
+
+  holidayAvails HolidayAvail[]
+
+  // Policy module
+  createdPolicies      Policy[]               @relation("PolicyCreator")
+  policyAcknowledgments PolicyAcknowledgment[]
+
+  // Events module
+  createdEvents Event[]    @relation("EventCreator")
+  eventRsvps   EventRSVP[]
+
+  // Desk Management module
+  deskBookings DeskBooking[]
+
+  // IT Support & HR Help Desk modules
+  createdTickets  Ticket[] @relation("TicketCreator")
+  assignedTickets Ticket[] @relation("TicketAssignee")
+  ticketComments TicketComment[]
+
+  // Expenses module
+  expenseClaims         ExpenseClaim[] @relation("ExpenseClaimEmployee")
+  expenseDecisions      ExpenseClaim[] @relation("ExpenseClaimDecider")
+  expenseReimbursements ExpenseClaim[] @relation("ExpenseClaimReimburser")
 
   // Chat module - an employee's messaging footprint (see chat models below).
   chatMemberships ConversationMember[]
@@ -573,4 +764,444 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+/**
+ * =========================================================
+ * Holidays module
+ * ---------------------------------------------------------
+ * Public holidays apply to everyone; optional holidays are
+ * a configurable pool employees can "avail" up to an annual
+ * allowance. A manager can see their direct reports' avails.
+ * =========================================================
+ */
+
+enum HolidayType {
+  PUBLIC
+  OPTIONAL
+}
+
+model Holiday {
+  id          String      @id @default(uuid())
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType @default(PUBLIC)
+  description String?
+  year        Int
+  status      RecordStatus @default(ACTIVE)
+
+  // Optional location scope; null applies to all locations.
+  locationId String?   @map("location_id")
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  avails HolidayAvail[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([year])
+  @@index([date])
+  @@index([locationId])
+  @@map("holidays")
+}
+
+/// Single-row holiday configuration (e.g. optional holiday allowance).
+model HolidaySettings {
+  id                      String @id @default("primary")
+  optionalHolidayAllowance Int    @default(2) @map("optional_holiday_allowance")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("holiday_settings")
+}
+
+/// An employee availing an optional holiday (one per holiday+employee).
+model HolidayAvail {
+  id        String   @id @default(uuid())
+  holidayId String   @map("holiday_id")
+  userId    String   @map("user_id")
+  year      Int
+
+  holiday Holiday @relation(fields: [holidayId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([holidayId, userId])
+  @@index([userId, year])
+  @@map("holiday_avails")
+}
+
+/**
+ * =========================================================
+ * Policy Management module
+ * ---------------------------------------------------------
+ * A Policy is a published company policy document that
+ * employees must review and acknowledge. Draft policies are
+ * only visible to HR/Admin; published policies are visible
+ * to all employees with their per-user acknowledgment status.
+ * =========================================================
+ */
+
+enum PolicyStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Policy {
+  id               String       @id @default(uuid())
+  title            String
+  description      String?
+  category         String?
+  documentPath     String       @map("document_path")
+  originalFilename String       @map("original_filename")
+  mimeType         String       @map("mime_type")
+  fileSize         Int          @map("file_size")
+  status           PolicyStatus @default(DRAFT)
+  effectiveDate    DateTime?    @db.Date @map("effective_date")
+  version          Int          @default(1)
+
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("PolicyCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  acknowledgments PolicyAcknowledgment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([category])
+  @@map("policies")
+}
+
+/// A formal acknowledgment that an employee has reviewed a published policy.
+model PolicyAcknowledgment {
+  id        String   @id @default(uuid())
+  policyId  String   @map("policy_id")
+  userId    String   @map("user_id")
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  acknowledgedAt DateTime @default(now()) @map("acknowledged_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([policyId, userId])
+  @@index([userId])
+  @@map("policy_acknowledgments")
+}
+
+/**
+ * =========================================================
+ * Desk Management module
+ * ---------------------------------------------------------
+ * Minimal desk booking: desks belong to an optional location
+ * and can be booked by employees for a single day. One desk
+ * may only have one active booking per day.
+ * =========================================================
+ */
+
+enum DeskBookingStatus {
+  BOOKED
+  CANCELLED
+}
+
+model Desk {
+  id          String        @id @default(uuid())
+  name        String
+  code        String        @unique
+  locationId  String?       @map("location_id")
+  location    Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  status      RecordStatus  @default(ACTIVE)
+
+  bookings DeskBooking[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([locationId])
+  @@map("desks")
+}
+
+model DeskBooking {
+  id        String            @id @default(uuid())
+  deskId    String            @map("desk_id")
+  userId    String            @map("user_id")
+  date      DateTime          @db.Date
+  status    DeskBookingStatus @default(BOOKED)
+  notes     String?
+
+  desk Desk @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([deskId, date])
+  @@index([userId, date])
+  @@map("desk_bookings")
+}
+
+/**
+ * =========================================================
+ * Events module
+ * ---------------------------------------------------------
+ * Company-wide events that employees can RSVP to.
+ * =========================================================
+ */
+
+enum EventRSVPResponse {
+  GOING
+  INTERESTED
+  NOT_GOING
+}
+
+model Event {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  date        DateTime
+  endDate     DateTime?     @map("end_date")
+  location    String?
+  category    String?
+  createdById String        @map("created_by_id")
+  createdBy   User          @relation("EventCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  status      RecordStatus  @default(ACTIVE)
+
+  rsvps EventRSVP[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([date])
+  @@map("events")
+}
+
+model EventRSVP {
+  id        String             @id @default(uuid())
+  eventId   String             @map("event_id")
+  userId    String             @map("user_id")
+  response  EventRSVPResponse  @default(GOING)
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([eventId, userId])
+  @@index([userId])
+  @@map("event_rsvps")
+}
+
+/**
+ * =========================================================
+ * IT Support & HR Help Desk modules
+ * ---------------------------------------------------------
+ * Shared ticket infrastructure for both modules.
+ * `module` distinguishes IT Support tickets from HR Help
+ * Desk tickets. Categories are scoped per module.
+ * =========================================================
+ */
+
+enum TicketModule {
+  IT_SUPPORT
+  HR_HELPDESK
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model TicketCategory {
+  id      String        @id @default(uuid())
+  name    String
+  module  TicketModule
+  icon    String?
+  active  Boolean       @default(true)
+
+  tickets Ticket[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([name, module])
+  @@index([module])
+  @@map("ticket_categories")
+}
+
+model Ticket {
+  id          String        @id @default(uuid())
+  module      TicketModule
+  title       String
+  description String
+  categoryId  String        @map("category_id")
+  category    TicketCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  priority    TicketPriority @default(MEDIUM)
+  status      TicketStatus   @default(OPEN)
+
+  createdById String   @map("created_by_id")
+  createdBy   User     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  assignedToId String?  @map("assigned_to_id")
+  assignedTo   User?    @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  resolvedAt DateTime? @map("resolved_at")
+  closedAt   DateTime? @map("closed_at")
+
+  comments TicketComment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([module, status])
+  @@index([module, priority])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@map("tickets")
+}
+
+model TicketComment {
+  id       String  @id @default(uuid())
+  ticketId String  @map("ticket_id")
+  userId   String  @map("user_id")
+  message  String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@map("ticket_comments")
+}
+
+/**
+ * =========================================================
+ * Expenses module
+ * ---------------------------------------------------------
+ * An ExpenseClaim is the header an employee submits; it
+ * carries one or more ExpenseItem line items. Each item
+ * belongs to an ExpenseCategory, which can declare a
+ * per-line cap and a receipt-required threshold.
+ *
+ * Status flow (simplified, single decision per claim):
+ *   DRAFT → SUBMITTED → APPROVED → REIMBURSED
+ *                     ↘ REJECTED
+ *                     ↘ CLARIFICATION → SUBMITTED
+ * =========================================================
+ */
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CLARIFICATION
+  REIMBURSED
+}
+
+enum ExpensePaymentMode {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  OTHER
+}
+
+model ExpenseCategory {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  icon        String?
+  /** Optional cap per line item in this category (null = uncapped). */
+  maxAmount            Decimal? @map("max_amount") @db.Decimal(12, 2)
+  /** A receipt becomes mandatory once a line exceeds this amount (null = never). */
+  receiptRequiredAbove Decimal? @map("receipt_required_above") @db.Decimal(12, 2)
+  active      Boolean @default(true)
+
+  items ExpenseItem[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@map("expense_categories")
+}
+
+model ExpenseClaim {
+  id          String  @id @default(uuid())
+  /** Human-readable claim number, e.g. EXP-0001. */
+  code        String  @unique
+  title       String
+  description String?
+  currency    String  @default("INR")
+
+  employeeId String @map("employee_id")
+  employee   User   @relation("ExpenseClaimEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  status      ExpenseStatus @default(DRAFT)
+  totalAmount Decimal       @default(0) @map("total_amount") @db.Decimal(12, 2)
+
+  submittedAt DateTime? @map("submitted_at")
+
+  // Manager decision (approve / reject / request clarification).
+  decidedById  String?   @map("decided_by_id")
+  decidedBy    User?     @relation("ExpenseClaimDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt    DateTime? @map("decided_at")
+  decisionNote String?   @map("decision_note")
+
+  // HR / Finance reimbursement.
+  reimbursedById   String?             @map("reimbursed_by_id")
+  reimbursedBy     User?               @relation("ExpenseClaimReimburser", fields: [reimbursedById], references: [id], onDelete: SetNull)
+  reimbursedAt     DateTime?           @map("reimbursed_at")
+  reimbursementRef String?             @map("reimbursement_ref")
+  paymentMode      ExpensePaymentMode? @map("payment_mode")
+
+  items ExpenseItem[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([employeeId, status])
+  @@index([status])
+  @@map("expense_claims")
+}
+
+model ExpenseItem {
+  id         String @id @default(uuid())
+  claimId    String @map("claim_id")
+  claim      ExpenseClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  categoryId String @map("category_id")
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  expenseDate DateTime           @map("expense_date")
+  amount      Decimal            @db.Decimal(12, 2)
+  description String?
+  paymentMode ExpensePaymentMode @default(OTHER) @map("payment_mode")
+
+  // Receipt attachment (optional until a category asks for one).
+  receiptPath     String? @map("receipt_path")
+  receiptFilename String? @map("receipt_filename")
+  receiptMimeType String? @map("receipt_mime_type")
+  receiptSize     Int?    @map("receipt_size")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([claimId])
+  @@index([categoryId])
+  @@map("expense_items")
 }

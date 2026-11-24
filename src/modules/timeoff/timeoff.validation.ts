@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationFields } from '../../utils/pagination';
 
 export const timeOffRequestTypeSchema = z.enum(['LEAVE', 'PERMISSION', 'REGULARIZATION', 'EXTRA_HOURS']);
 export const timeOffRequestStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
@@ -86,8 +87,7 @@ export const listTimeOffQuerySchema = z.object({
   type: timeOffRequestTypeSchema.optional(),
   status: timeOffRequestStatusSchema.optional(),
   q: z.string().trim().max(80).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  ...paginationFields(),
 });
 
 export const updateApprovalFlowSchema = z.object({

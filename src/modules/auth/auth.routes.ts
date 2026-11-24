@@ -11,7 +11,7 @@ const router = Router();
 /** Stricter limiter for credential endpoints to slow down brute force attempts. */
 const authLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: 20,
+  max: env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many attempts, please try again later' },

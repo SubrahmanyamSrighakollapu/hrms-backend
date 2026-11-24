@@ -3,6 +3,7 @@ import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { prisma } from '../../config/prisma';
 import { ApiError } from '../../utils/ApiError';
+import { pageMeta, skipTake, type PageMeta } from '../../utils/pagination';
 import * as notificationsService from '../notifications/notifications.service';
 import { removePayslipFile, resolvePayrollPath, storePayslip } from './payroll.storage';
 import type { ListPayslipsQuery, UploadPayslipsInput } from './payroll.validation';
@@ -206,7 +207,7 @@ export async function listPayslips(
   actorId: string,
   canManage: boolean,
   query: ListPayslipsQuery,
-): Promise<{ payslips: PayslipDto[]; total: number; page: number; pageSize: number; totalPages: number }> {
+): Promise<{ payslips: PayslipDto[] } & PageMeta> {
   const where: Prisma.PayslipWhereInput = {
     ...(!canManage ? { employeeId: actorId } : {}),
     ...(query.payrollPeriod ? { payrollPeriod: periodDate(query.payrollPeriod) } : {}),
@@ -218,17 +219,13 @@ export async function listPayslips(
       where,
       select: payslipSelect,
       orderBy: [{ payrollPeriod: 'desc' }, { employee: { firstName: 'asc' } }],
-      skip: (query.page - 1) * query.pageSize,
-      take: query.pageSize,
+      ...skipTake(query.page, query.pageSize),
     }),
   ]);
 
   return {
     payslips: rows.map(toDto),
-    total,
-    page: query.page,
-    pageSize: query.pageSize,
-    totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+    ...pageMeta(query.page, query.pageSize, total),
   };
 }
 

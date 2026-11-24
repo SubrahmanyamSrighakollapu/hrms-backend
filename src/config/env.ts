@@ -60,6 +60,8 @@ const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  /** Stricter cap for credential endpoints (login/register/refresh). */
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
 
   // ---- Chat module ----
   /** Root for chat attachment storage. Production: /var/www/hrms-chat-storage */
@@ -77,6 +79,16 @@ const envSchema = z.object({
   PAYROLL_STORAGE_ROOT: z.string().min(1).default('storage/payroll'),
   PAYROLL_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().max(50).default(10),
   PAYROLL_MAX_FILES_PER_BATCH: z.coerce.number().int().positive().max(500).default(100),
+
+  // ---- Policy Management module ----
+  /** Root for policy documents. Production should use persistent storage. */
+  POLICY_STORAGE_ROOT: z.string().min(1).default('storage/policies'),
+  POLICY_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().max(50).default(10),
+
+  // ---- Expenses module ----
+  /** Root for expense receipts. Production should use persistent storage. */
+  EXPENSE_STORAGE_ROOT: z.string().min(1).default('storage/expenses'),
+  EXPENSE_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().max(50).default(10),
 });
 
 
@@ -129,6 +141,8 @@ export const env = {
     .filter(Boolean),
   chatMaxFileSizeBytes: raw.CHAT_MAX_FILE_SIZE_MB * 1024 * 1024,
   payrollMaxFileSizeBytes: raw.PAYROLL_MAX_FILE_SIZE_MB * 1024 * 1024,
+  policyMaxFileSizeBytes: raw.POLICY_MAX_FILE_SIZE_MB * 1024 * 1024,
+  expenseMaxFileSizeBytes: raw.EXPENSE_MAX_FILE_SIZE_MB * 1024 * 1024,
 };
 
 export type Env = typeof env;

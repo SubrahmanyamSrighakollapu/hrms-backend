@@ -35,6 +35,14 @@ const SYSTEM_ROLES: RoleSeed[] = [
       attendance: 'MANAGE',
       payroll: 'MANAGE',
       chat: 'MANAGE',
+      holidays: 'MANAGE',
+      policies: 'MANAGE',
+      'desk-management': 'MANAGE',
+      calendars: 'VIEW',
+      events: 'MANAGE',
+      'it-support': 'MANAGE',
+      'hr-helpdesk': 'MANAGE',
+      expenses: 'MANAGE',
       employees: 'MANAGE',
       reports: 'VIEW',
       organization: 'VIEW',
@@ -53,6 +61,14 @@ const SYSTEM_ROLES: RoleSeed[] = [
       attendance: 'VIEW',
       payroll: 'VIEW',
       chat: 'VIEW',
+      holidays: 'VIEW',
+      policies: 'VIEW',
+      'desk-management': 'VIEW',
+      calendars: 'VIEW',
+      events: 'VIEW',
+      'it-support': 'VIEW',
+      'hr-helpdesk': 'VIEW',
+      expenses: 'VIEW',
     },
   },
 ];
@@ -145,6 +161,40 @@ async function upsertUser(data: {
 
   console.log(`  - user ${user.email} (${user.category})`);
   return user;
+}
+
+/* ---------------- expense categories ---------------- */
+
+interface ExpenseCategorySeed {
+  name: string;
+  description: string;
+  /** A receipt becomes mandatory above this line amount. */
+  receiptRequiredAbove: number;
+}
+
+const DEFAULT_EXPENSE_CATEGORIES: ExpenseCategorySeed[] = [
+  { name: 'Travel', description: 'Flights, trains, cabs and mileage', receiptRequiredAbove: 500 },
+  { name: 'Accommodation', description: 'Hotels and lodging', receiptRequiredAbove: 1000 },
+  { name: 'Meals', description: 'Meals during business travel or late hours', receiptRequiredAbove: 500 },
+  { name: 'Office Supplies', description: 'Stationery, hardware and consumables', receiptRequiredAbove: 500 },
+  { name: 'Client Entertainment', description: 'Client meetings and hospitality', receiptRequiredAbove: 1000 },
+  { name: 'Internet & Phone', description: 'Connectivity and communication reimbursements', receiptRequiredAbove: 500 },
+  { name: 'Training', description: 'Courses, certifications and conferences', receiptRequiredAbove: 1000 },
+  { name: 'Miscellaneous', description: 'Other approved business expenses', receiptRequiredAbove: 500 },
+];
+
+async function upsertExpenseCategory(def: ExpenseCategorySeed) {
+  const category = await prisma.expenseCategory.upsert({
+    where: { name: def.name },
+    update: {},
+    create: {
+      name: def.name,
+      description: def.description,
+      receiptRequiredAbove: def.receiptRequiredAbove,
+    },
+  });
+  console.log(`  - expense category ${category.name}`);
+  return category;
 }
 
 /**
@@ -258,6 +308,12 @@ async function main() {
     }
   }
   console.log(`  - ${seededUsers.length} employees × ${leaveTypes.length} leave types for ${year}`);
+
+  /* ---------------- default expense categories ---------------- */
+  console.log('\nSeeding expense categories...');
+  for (const def of DEFAULT_EXPENSE_CATEGORIES) {
+    await upsertExpenseCategory(def);
+  }
 
   console.log(`\nSeed complete. HR reference id: ${hr.id}`);
 }
